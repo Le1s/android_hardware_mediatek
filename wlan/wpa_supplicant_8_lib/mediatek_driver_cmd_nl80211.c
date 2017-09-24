@@ -9,7 +9,18 @@
  * license.
  *
  */
-#include "hardware_legacy/driver_nl80211.h"
+#include "includes.h"
+#include <sys/types.h>
+#include <fcntl.h>
+#include <net/if.h>
+#include <netlink/attr.h>
+#include <netlink/handlers.h>
+#include <netlink/genl/genl.h>
+#include <netlink/genl/ctrl.h>
+
+#include "common.h"
+#include "linux_ioctl.h"
+#include "driver_nl80211.h"
 #include "mediatek_driver_nl80211.h"
 #include "wpa_supplicant_i.h"
 #include "config.h"
@@ -322,7 +333,7 @@ static int testmode_available_channel_handler(struct nl_msg *msg, void *arg)
     static struct nla_policy policy[NL80211_TESTMODE_AVAILABLE_CHAN_NUM] = {
     	[NL80211_TESTMODE_AVAILABLE_CHAN_2G_BASE_1] 	    = { .type = NLA_U32 },
     	[NL80211_TESTMODE_AVAILABLE_CHAN_5G_BASE_34] 	    = { .type = NLA_U32 },
-    	[NL80211_TESTMODE_AVAILABLE_CHAN_5G_BASE_100] 	    = { .type = NLA_U32 },    	
+    	[NL80211_TESTMODE_AVAILABLE_CHAN_5G_BASE_100] 	    = { .type = NLA_U32 },
     	[NL80211_TESTMODE_AVAILABLE_CHAN_5G_BASE_149] 	    = { .type = NLA_U32 },
     	[NL80211_TESTMODE_AVAILABLE_CHAN_5G_BASE_184] 	    = { .type = NLA_U32 },
     };
@@ -330,13 +341,13 @@ static int testmode_available_channel_handler(struct nl_msg *msg, void *arg)
 
     nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
     	  genlmsg_attrlen(gnlh, 0), NULL);
-    
-    if (!tb[NL80211_ATTR_TESTDATA] || 
+
+    if (!tb[NL80211_ATTR_TESTDATA] ||
             nla_parse_nested(sinfo, NL80211_TESTMODE_AVAILABLE_CHAN_MAX, tb[NL80211_ATTR_TESTDATA], policy))
     	return NL_SKIP;
 
     for(i=1; i < NL80211_TESTMODE_AVAILABLE_CHAN_NUM; i++) {
-        if(sinfo[i]) { 		
+        if(sinfo[i]) {
             switch(i) {
             	case NL80211_TESTMODE_AVAILABLE_CHAN_2G_BASE_1:
                     available_chan->ch_2g_base1 =nla_get_u32(sinfo[i]);
@@ -346,10 +357,10 @@ static int testmode_available_channel_handler(struct nl_msg *msg, void *arg)
                     break;
             	case NL80211_TESTMODE_AVAILABLE_CHAN_5G_BASE_100:
                     available_chan->ch_5g_base100 = nla_get_u32(sinfo[i]);
-                    break;                    
+                    break;
             	case NL80211_TESTMODE_AVAILABLE_CHAN_5G_BASE_149:
                     available_chan->ch_5g_base149 = nla_get_u32(sinfo[i]);
-                    break;                    
+                    break;
             	case NL80211_TESTMODE_AVAILABLE_CHAN_5G_BASE_184:
                     available_chan->ch_5g_base184 = nla_get_u32(sinfo[i]);
                 default:
@@ -357,7 +368,7 @@ static int testmode_available_channel_handler(struct nl_msg *msg, void *arg)
             }
         }
     }
-    
+
     return NL_SKIP;
 }
 static void wpa_driver_nl80211_scan_loading_timeout(void *eloop_ctx, void *timeout_ctx)
@@ -369,12 +380,6 @@ static void wpa_driver_nl80211_scan_loading_timeout(void *eloop_ctx, void *timeo
 				     NULL);
 }
 #endif
-static void * nl80211_cmd(struct wpa_driver_nl80211_data *drv,
-			  struct nl_msg *msg, int flags, uint8_t cmd)
-{
-	return genlmsg_put(msg, 0, 0, drv->global->nl80211_id,
-			   0, flags, cmd, 0);
-}
 
 int wpa_driver_nl80211_testmode(void *priv, const u8 *data,
 	                        size_t data_len)
@@ -422,20 +427,20 @@ int wpa_driver_nl80211_testmode(void *priv, const u8 *data,
     		{
     		    struct wpa_driver_get_sta_link_detect_params *sta_params =  (struct wpa_driver_get_sta_link_detect_params *)data;
 
-    		    return send_and_recv_msgs(drv, msg, testmode_sta_link_detect_handler, sta_params->buf);            
+    		    return send_and_recv_msgs(drv, msg, testmode_sta_link_detect_handler, sta_params->buf);
     		}
-#endif                       
+#endif
 #ifdef CONFIG_MTK_LTE_COEX
 	case 0x30:
         	{
             	    struct wpa_driver_get_available_channel_params *chan_params = (struct wpa_driver_get_available_channel_params *) data;
-    
-    		    return send_and_recv_msgs(drv, msg, testmode_available_channel_handler, chan_params->buf);            
-        	}            
-#endif               
+
+    		    return send_and_recv_msgs(drv, msg, testmode_available_channel_handler, chan_params->buf);
+        	}
+#endif
         default:
     		{
-    		    int ret = 0;   
+    		    int ret = 0;
     		    ret = send_and_recv_msgs(drv, msg, NULL, NULL);
     		    wpa_printf(MSG_DEBUG, "ret = %d, nl=%d",ret, drv->global->nl);
     		    return ret;
@@ -731,6 +736,13 @@ static int wpa_driver_mediatek_set_country(void *priv, const char *alpha2_arg)
 	int ret=-1;
 	char buf[11];
 
+#ifdef MTK_TC1_FEATURE
+	char replace_ifname[IFNAMSIZ+1];
+
+	memset( replace_ifname, 0, IFNAMSIZ+1 );
+	os_strlcpy( replace_ifname, "wlan0", os_strlen("wlan0")+1 );
+#endif
+
 	wpa_printf(MSG_DEBUG, "wpa_driver_nl80211_set_country");
 	ioctl_sock = socket(PF_INET, SOCK_DGRAM, 0);
 	if (ioctl_sock < 0) {
@@ -738,7 +750,18 @@ static int wpa_driver_mediatek_set_country(void *priv, const char *alpha2_arg)
 		return -1;
 	}
 	os_memset(&iwr, 0, sizeof(iwr));
+#ifdef MTK_TC1_FEATURE
+    // convert 'p2p0' -> 'wlan0' :
+    // when iface name is p2p0, COUNTRY driver command doesn't support in MTK solution.
+    if( os_strncmp(drv->first_bss->ifname, "p2p0", os_strlen("p2p0") ) == 0 ) {
+        wpa_printf(MSG_DEBUG, "Change interface name : p2p0->wlan0");
+        os_strlcpy(iwr.ifr_name, replace_ifname, IFNAMSIZ );
+    } else {
+        os_strlcpy(iwr.ifr_name, drv->first_bss->ifname, IFNAMSIZ);
+    }
+#else
 	os_strlcpy(iwr.ifr_name, drv->first_bss->ifname, IFNAMSIZ);
+#endif
 	sprintf(buf,"COUNTRY %s",alpha2_arg);
 	iwr.u.data.pointer = buf;
 	iwr.u.data.length = strlen(buf);
@@ -964,17 +987,17 @@ int wpas_get_sta_link_detect(struct wpa_supplicant *wpa_s, u8 *buf)
 int wpas_get_available_channel(struct wpa_supplicant *wpa_s, u8 *buf)
 {
 	struct wpa_driver_get_available_channel_params params;
-    
+
 	os_memset(&params, 0, sizeof(params));
 	wpa_printf(MSG_DEBUG, "wpas_get_available_channel");
 	params.hdr.index = 0x30;
 	params.hdr.index = params.hdr.index | (0x01 << 24);
 	params.hdr.buflen = sizeof(struct wpa_driver_get_available_channel_params);
 
-	// buffer for return structure // 
+	// buffer for return structure //
 	params.buf = buf;
-	
-	return wpa_drv_set_test_mode(wpa_s, (u8 *)&params, 
+
+	return wpa_drv_set_test_mode(wpa_s, (u8 *)&params,
         	sizeof(struct wpa_driver_get_available_channel_params));
 }
 
@@ -1306,17 +1329,6 @@ static int p2p_wfd_sink_config_scc(struct wpa_supplicant *wpa_s, int scc, unsign
 				op_reg_class, op_channel);
 		return ret;
 	}
-#ifdef CONFIG_MTK_SCC
-	/* If supplicant support SCC, need check if legacy is still connected */
-	for (iface = wpa_s->global->ifaces; iface; iface = iface->next) {
-		if (iface->current_ssid &&
-		    os_strlen(iface->ifname) == os_strlen("wlan0") &&
-		    !os_strncmp(iface->ifname, "wlan0", os_strlen(iface->ifname))) {
-		    	wpa_printf(MSG_DEBUG, "Supplicant in SCC mode, do not recovery MCC");
-			return ret;
-		    }
-	}
-#endif
 	/* Get back to MCC */
 	wpa_printf(MSG_DEBUG, "Config MCC");
 	if (wpa_s->conf->p2p_oper_reg_class &&
@@ -1327,7 +1339,7 @@ static int p2p_wfd_sink_config_scc(struct wpa_supplicant *wpa_s, int scc, unsign
 	} else {
 		p2p->op_reg_class = 81;
 		os_get_random((u8 *)&r, sizeof(r));
-		p2p->op_channel = 1 + (r % 3) * 5; 
+		p2p->op_channel = 1 + (r % 3) * 5;
 		p2p->cfg->cfg_op_channel = 0;
 	}
 	os_memcpy(&p2p->channels, &p2p->cfg->channels,
@@ -1588,7 +1600,12 @@ int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
 		switch (miracast) {
 		case 0:
 		case 1:
-			p2p_wfd_sink_config_scc(wpa_s, 0, 0);
+			freq = wpa_drv_shared_freq(wpa_s);
+			if (freq > 0) {
+				wpa_printf(MSG_DEBUG, "AIS connected %d", freq);
+				p2p_wfd_sink_config_scc(wpa_s, 1, freq);
+			} else
+				p2p_wfd_sink_config_scc(wpa_s, 0, 0);
 			handled = 0; /* DRIVER MIRACAST used as private cmd*/
 			break;
 		case 2:
@@ -1601,19 +1618,42 @@ int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
 				os_memset(cmd, 0, os_strlen(cmd));
 				os_memcpy(cmd, "MIRACAST 2", os_strlen("MIRACAST 2"));
 			} else {
-				wpa_printf(MSG_DEBUG, "MIRACAST pure 2");
-				p2p_wfd_sink_config_scc(wpa_s, 0, 0);
+				freq = wpa_drv_shared_freq(wpa_s);
+				if (freq > 0) {
+					wpa_printf(MSG_DEBUG, "AIS connected %d", freq);
+					p2p_wfd_sink_config_scc(wpa_s, 1, freq);
+				} else
+					p2p_wfd_sink_config_scc(wpa_s, 0, 0);
 			}
 
 			handled = 0; /* DRIVER MIRACAST used as private cmd*/
 
 			break;
 		default:
-			wpa_printf(MSG_DEBUG, "Unknown MIRACAST value %d", miracast); 
+			wpa_printf(MSG_DEBUG, "Unknown MIRACAST value %d", miracast);
 			handled = 0; /* DRIVER MIRACAST used as private cmd*/
 			break;
 		}
 
+#endif
+#ifdef CONFIG_MTK_SCC_MCC
+	} else if (os_strncasecmp(cmd, "p2p_use_mcc=", os_strlen("p2p_use_mcc=")) == 0) {
+		unsigned char use_mcc = atoi(cmd + os_strlen("p2p_use_mcc="));
+		wpa_printf(MSG_DEBUG, "p2p_use_mcc %d", use_mcc);
+		wpa_s->global->p2p->p2p_use_mcc = use_mcc;
+		if (use_mcc) {
+			wpa_printf(MSG_DEBUG, "SCC_MCC, config MCC");
+			p2p_wfd_sink_config_scc(wpa_s, 0, 0);
+		} else {
+			int shared_freq = wpa_drv_shared_freq(wpa_s);
+			wpa_printf(MSG_DEBUG, "use_mcc=0");
+			shared_freq = wpa_drv_shared_freq(wpa_s);
+			if (shared_freq > 0) {
+				wpa_printf(MSG_DEBUG, "p2p disconnected, AIS connected %d", shared_freq);
+				p2p_wfd_sink_config_scc(wpa_s, 1, shared_freq);
+			} else
+				p2p_wfd_sink_config_scc(wpa_s, 0, 0);
+		}
 #endif
 #ifdef CONFIG_MTK_P2P_SIGMA
 	} else if (os_strncasecmp(cmd, "mcc", 3) == 0) {
@@ -1711,7 +1751,7 @@ int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
 			wpas_driver_set_beamplus(wpa_s, value);
 		}
 #endif
-    } 
+    }
 #ifdef CONFIG_MTK_STAGE_SCAN
 	/* use driver command */
 	else if (os_strncasecmp(cmd, "set_band_dual", 13) == 0 ) {
@@ -1725,51 +1765,51 @@ int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
 		u32 idx = 0;
 		wpa_driver_nl80211_driver_sw_cmd(priv, 1, &sw_cmd, &idx);
 		wpa_printf(MSG_DEBUG, "[STAGE_SCAN] Set Band = 2G4 (sw_cmd: 0x%08X)", sw_cmd);
-		ret = 0;		
+		ret = 0;
 	} else if (os_strncasecmp(cmd, "set_band_5g", 11) == 0 ) {
 		u32 sw_cmd = 0xFFFF1252;
 		u32 idx = 0;
 		wpa_driver_nl80211_driver_sw_cmd(priv, 1, &sw_cmd, &idx);
 		wpa_printf(MSG_DEBUG, "[STAGE_SCAN] Set Band = 5G (sw_cmd: 0x%08X)", sw_cmd);
-		ret = 0;		
-	} 	
+		ret = 0;
+	}
+#if 0
 	else if (os_strncasecmp(cmd, "SETBAND", 7) == 0 ) {
 		u32 sw_cmd = 0xFFFF1250;
 		u32 idx = 0;
 		char *value;
 		int band = 0;
-		
+
 		value = os_strchr(cmd, ' ');
 		if (value == NULL)
 			return -1;
 		*value++ = '\0';
-		
+
 		band = atoi(value);
 		switch(band) {
 			case 1:
 				sw_cmd = 0xFFFF1252;
 				wpa_printf(MSG_DEBUG, "[STAGE_SCAN] WIFI_FREQUENCY_BAND_5GHZ (sw_cmd: 0x%08X)", sw_cmd);
-				wpa_driver_nl80211_driver_sw_cmd(priv, 1, &sw_cmd, &idx);				
 				break;
 			case 2:
 				sw_cmd = 0xFFFF1251;
 				wpa_printf(MSG_DEBUG, "[STAGE_SCAN] WIFI_FREQUENCY_BAND_2GHZ (sw_cmd: 0x%08X)", sw_cmd);
-				wpa_driver_nl80211_driver_sw_cmd(priv, 1, &sw_cmd, &idx);				
-				break;	
+				break;
 			default:
 				sw_cmd = 0xFFFF1250;
 				wpa_printf(MSG_DEBUG, "[STAGE_SCAN] WIFI_FREQUENCY_BAND_AUTO (sw_cmd: 0x%08X)", sw_cmd);
 		}
-		
+		wpa_driver_nl80211_driver_sw_cmd(priv, 1, &sw_cmd, &idx);
 		ret = 0;
 	}
+#endif
 	else if (os_strncasecmp(cmd, "set_scan_loading", 16) == 0 ) {
 		u32 sw_cmd = 0xFFFF1253;
 		u32 idx = 0;
 
 		wpa_printf(MSG_DEBUG, "[STAGE_SCAN] Set scan loading");
 		wpa_driver_nl80211_driver_sw_cmd(priv, 1, &sw_cmd, &idx);
-		
+
 		wpa_printf(MSG_DEBUG, "[STAGE_SCAN] Scan loading timeout= 1 second");
 		eloop_cancel_timeout(wpa_driver_nl80211_scan_loading_timeout, drv, drv->ctx);
 		eloop_register_timeout(10, 0, wpa_driver_nl80211_scan_loading_timeout,
@@ -1796,7 +1836,7 @@ int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
 		os_memcpy(buf, cmd, strlen(cmd) + 1);
 		memset(&ifr, 0, sizeof(ifr));
 		memset(&priv_cmd, 0, sizeof(priv_cmd));
-		os_strncpy(ifr.ifr_name, bss->ifname, IFNAMSIZ);
+		strncpy(ifr.ifr_name, bss->ifname, IFNAMSIZ);
 
 		priv_cmd.buf = buf;
 		priv_cmd.used_len = buf_len;
@@ -1808,7 +1848,7 @@ int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
 			wpa_driver_send_hang_msg(drv);
 		} else {
 
-			wpa_printf(MSG_DEBUG, "%s: ret = %d used = %u total = %u", 
+			wpa_printf(MSG_DEBUG, "%s: ret = %d used = %u total = %u",
                     		__func__, ret , priv_cmd.used_len, priv_cmd.total_len);
 
 			drv_errors = 0;
@@ -1822,7 +1862,7 @@ int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
 			//		EVENT_CHANNEL_LIST_CHANGED, NULL);
 				wpa_printf(MSG_INFO, "%s: Unsupported command SETBAND\n",__func__);
             		}
-			wpa_printf(MSG_INFO, "%s: buf = %s ret = %d used = %u total = %u", 
+			wpa_printf(MSG_INFO, "%s: buf = %s ret = %d used = %u total = %u",
                     		__func__, buf, ret , priv_cmd.used_len, priv_cmd.total_len);
 		}
 	} /* handled == 0 */
@@ -1867,4 +1907,3 @@ int wpa_driver_set_ap_wps_p2p_ie(void *priv, const struct wpabuf *beacon,
 	wpa_printf(MSG_DEBUG, "iface %s set_ap_wps_p2p_ie, ignored", bss->ifname);
 	return 0;
 }
-
